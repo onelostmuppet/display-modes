@@ -20,6 +20,8 @@ The switch is instant: no sign-out, no restart.
 
    It creates `Compact.lnk` and `Roomy.lnk` next to the scripts and prints where it wrote them.
    Each shortcut runs `powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "<script>"`.
+   Each has its own icon from `icons\`: teal **175** for Compact, indigo **225** with a taskbar strip for Roomy.
+   To change the look, edit `tools\New-Icons.ps1`, run it, then re-run the installer.
 3. Pin both shortcuts to the taskbar: right-click the `.lnk`, choose **Show more options**, then **Pin to taskbar**.
    Windows 11 only pins shortcuts whose target is an `.exe`; the target here is `powershell.exe`, so this works.
 4. If you move or rename the folder, run the installer again. The shortcuts hold absolute paths, so they are

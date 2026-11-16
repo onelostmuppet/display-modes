@@ -203,6 +203,7 @@ function Test-ShortcutsInstall {
             $src = Join-Path $root $f
             if (Test-Path $src) { Copy-Item $src $dir }
         }
+        if (Test-Path (Join-Path $root 'icons')) { Copy-Item (Join-Path $root 'icons') $dir -Recurse }
         # Run twice: the installer must be idempotent.
         1..2 | ForEach-Object {
             & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $dir 'Install-Shortcuts.ps1') | Out-Null
@@ -220,10 +221,12 @@ function Test-ShortcutsInstall {
                 if ($lnk.Arguments -notlike "*$frag*") { throw "$mode.lnk Arguments missing '$frag': $($lnk.Arguments)" }
             }
             Assert-Equal $lnk.WorkingDirectory $dir "$mode.lnk WorkingDirectory"
-            if (-not $lnk.IconLocation) { throw "$mode.lnk has no IconLocation" }
-            $icons += $lnk.IconLocation
+            $expectedIcon = Join-Path $dir "icons\$mode.ico"
+            Assert-Equal $lnk.IconLocation "$expectedIcon,0" "$mode.lnk IconLocation"
+            if (-not (Test-Path -LiteralPath $expectedIcon)) { throw "$mode icon file missing: $expectedIcon" }
+            $icons += (Get-FileHash -LiteralPath $expectedIcon -Algorithm SHA256).Hash
         }
-        if ($icons[0] -eq $icons[1]) { throw "Compact and Roomy should use different icons, both are '$($icons[0])'" }
+        if ($icons[0] -eq $icons[1]) { throw 'Compact and Roomy icon files must differ, but their contents are identical' }
     } finally {
         Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
     }

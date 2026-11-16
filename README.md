@@ -38,8 +38,9 @@ The switch is instant: no sign-out, no restart.
 - **Risk:** the scale call is undocumented, so a future Windows update may break it. If that happens the message box
   says the display scale failed or did not apply. The auto-hide setter is a separate `SHAppBarMessage` call, so it is still
   attempted and reported on its own.
-- **`ShowFatal.ps1`:** a small, dependency-free message-box helper used by `Compact.ps1` and `Roomy.ps1` for any failure,
-  including `DisplayModes.ps1` itself failing to load. `DisplayModes.ps1` holds the actual getters and setters.
+- **`ShowFatal.ps1`:** `DisplayModes.ps1` reports setting mismatches and setter errors itself (and holds the getters and
+  setters). `ShowFatal.ps1` is a small, dependency-free message-box helper used by `Compact.ps1` and `Roomy.ps1` to cover
+  anything that escapes, including `DisplayModes.ps1` failing to load.
 
 ## Tests
 

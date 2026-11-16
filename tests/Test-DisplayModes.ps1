@@ -194,6 +194,41 @@ function Test-ModeScriptReportsLoadFailure {
     }
 }
 
+function Test-ShortcutsInstall {
+    # Run the installer in a temp copy of the project (path contains a space) and read the .lnk files back.
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ("dm shortcuts " + [guid]::NewGuid().ToString('N'))
+    [void](New-Item -ItemType Directory -Path $dir)
+    try {
+        foreach ($f in 'Install-Shortcuts.ps1', 'Compact.ps1', 'Roomy.ps1') {
+            $src = Join-Path $root $f
+            if (Test-Path $src) { Copy-Item $src $dir }
+        }
+        # Run twice: the installer must be idempotent.
+        1..2 | ForEach-Object {
+            & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $dir 'Install-Shortcuts.ps1') | Out-Null
+            Assert-Equal $LASTEXITCODE 0 'Installer exit code'
+        }
+        $wsh = New-Object -ComObject WScript.Shell
+        $expectedExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $icons = @()
+        foreach ($mode in 'Compact', 'Roomy') {
+            $lnkPath = Join-Path $dir "$mode.lnk"
+            if (-not (Test-Path $lnkPath)) { throw "$mode.lnk was not created" }
+            $lnk = $wsh.CreateShortcut($lnkPath)
+            Assert-Equal $lnk.TargetPath $expectedExe "$mode.lnk TargetPath"
+            foreach ($frag in '-ExecutionPolicy Bypass', '-WindowStyle Hidden', ('-File "' + (Join-Path $dir "$mode.ps1") + '"')) {
+                if ($lnk.Arguments -notlike "*$frag*") { throw "$mode.lnk Arguments missing '$frag': $($lnk.Arguments)" }
+            }
+            Assert-Equal $lnk.WorkingDirectory $dir "$mode.lnk WorkingDirectory"
+            if (-not $lnk.IconLocation) { throw "$mode.lnk has no IconLocation" }
+            $icons += $lnk.IconLocation
+        }
+        if ($icons[0] -eq $icons[1]) { throw "Compact and Roomy should use different icons, both are '$($icons[0])'" }
+    } finally {
+        Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+    }
+}
+
 $tests = @(
     'Test-TaskbarRoundTrip'
     'Test-ScaleCurrent'
@@ -203,6 +238,7 @@ $tests = @(
     'Test-ModeIdempotent'
     'Test-ModeReportsFailure'
     'Test-ModeScriptReportsLoadFailure'
+    'Test-ShortcutsInstall'
 )
 
 # ---- Runner ----

@@ -22,10 +22,44 @@ function Test-TaskbarRoundTrip {
     }
 }
 
+# Independent oracle: a fresh per-monitor-v2 DPI-aware child process reads the primary monitor's
+# effective DPI. (AppliedDPI in the registry only updates at sign-in, so it cannot be used.)
+$script:LiveDpiChild = @'
+$ProgressPreference = 'SilentlyContinue'  # keep progress CLIXML out of the parent's console
+Add-Type -Namespace LiveDpi -Name Native -MemberDefinition @"
+[DllImport("user32.dll")] public static extern IntPtr SetProcessDpiAwarenessContext(IntPtr value);
+[DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(long pt, uint flags);
+[DllImport("shcore.dll")] public static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
+"@
+if ([LiveDpi.Native]::SetProcessDpiAwarenessContext([IntPtr](-4)) -eq [IntPtr]::Zero) { throw 'SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2) failed' }
+$mon = [LiveDpi.Native]::MonitorFromPoint(0, 1)  # point (0,0), MONITOR_DEFAULTTOPRIMARY
+$x = [uint32]0; $y = [uint32]0
+$hr = [LiveDpi.Native]::GetDpiForMonitor($mon, 0, [ref]$x, [ref]$y)  # MDT_EFFECTIVE_DPI
+if ($hr -ne 0) { throw "GetDpiForMonitor failed ($hr)" }
+[int][math]::Round($x / 96 * 100)
+'@
+
+function Get-LiveDisplayScale {
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script:LiveDpiChild))
+    $out = & powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded
+    if ($LASTEXITCODE -ne 0) { throw "Live DPI child process failed: $out" }
+    return [int]($out | Select-Object -Last 1)
+}
+
+function Wait-LiveDisplayScale([int]$Expected) {
+    # Poll up to ~2s in case the live DPI lags the set call; returns the last value seen.
+    $deadline = (Get-Date).AddSeconds(2)
+    $live = Get-LiveDisplayScale
+    while ($live -ne $Expected -and (Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 200
+        $live = Get-LiveDisplayScale
+    }
+    return $live
+}
+
 function Test-ScaleCurrent {
-    $dpi = (Get-ItemProperty 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name AppliedDPI).AppliedDPI
-    $expected = [int][math]::Round($dpi / 96 * 100)
-    Assert-Equal (Get-DisplayScale) $expected "Get-DisplayScale vs AppliedDPI $dpi"
+    $api = Get-DisplayScale
+    Assert-Equal (Wait-LiveDisplayScale $api) $api 'Get-DisplayScale vs live monitor DPI'
 }
 
 function Test-ScaleRoundTrip {
@@ -35,6 +69,7 @@ function Test-ScaleRoundTrip {
             $ret = Set-DisplayScale -Percent $want
             Assert-Equal $ret $want "Set-DisplayScale -Percent $want return value"
             Assert-Equal (Get-DisplayScale) $want "Get-DisplayScale after setting $want"
+            Assert-Equal (Wait-LiveDisplayScale $want) $want "Live monitor DPI after setting $want"
         }
     } finally {
         if ((Get-DisplayScale) -ne $orig) { [void](Set-DisplayScale -Percent $orig) }

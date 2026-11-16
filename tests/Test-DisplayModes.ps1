@@ -172,6 +172,28 @@ function Test-ModeReportsFailure {
     }
 }
 
+function Test-ModeScriptReportsLoadFailure {
+    # Copy Compact.ps1 (+ ShowFatal.ps1) to a folder with no DisplayModes.ps1; capture the message via
+    # DISPLAYMODES_CAPTURE_FILE (ShowFatal.ps1 writes there instead of showing a MessageBox).
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ("dm-loadfail " + [guid]::NewGuid().ToString('N'))
+    [void](New-Item -ItemType Directory -Path $dir)
+    $capture = Join-Path $dir 'captured.txt'
+    $oldEnv = $env:DISPLAYMODES_CAPTURE_FILE
+    try {
+        Copy-Item (Join-Path $root 'Compact.ps1') $dir
+        if (Test-Path (Join-Path $root 'ShowFatal.ps1')) { Copy-Item (Join-Path $root 'ShowFatal.ps1') $dir }
+        $env:DISPLAYMODES_CAPTURE_FILE = $capture
+        & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $dir 'Compact.ps1') | Out-Null
+        Assert-Equal $LASTEXITCODE 1 'Exit code when helper cannot be loaded'
+        if (-not (Test-Path $capture)) { throw 'No error message was reported when the helper could not be loaded' }
+        $msg = Get-Content -Raw $capture
+        if ($msg -notmatch 'Compact' -or $msg -notmatch 'DisplayModes') { throw "Message should name the mode and the failure, got: $msg" }
+    } finally {
+        $env:DISPLAYMODES_CAPTURE_FILE = $oldEnv
+        Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+    }
+}
+
 $tests = @(
     'Test-TaskbarRoundTrip'
     'Test-ScaleCurrent'
@@ -180,6 +202,7 @@ $tests = @(
     'Test-ModeApplies'
     'Test-ModeIdempotent'
     'Test-ModeReportsFailure'
+    'Test-ModeScriptReportsLoadFailure'
 )
 
 # ---- Runner ----

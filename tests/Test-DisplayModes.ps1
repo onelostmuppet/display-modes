@@ -85,11 +85,101 @@ function Test-ScaleUnsupported {
     Assert-Equal (Get-DisplayScale) $before 'Scale unchanged after unsupported request'
 }
 
+function Test-ModeApplies {
+    $origAH = Get-TaskbarAutoHide; $origScale = Get-DisplayScale
+    $saved = $script:ShowError
+    $script:ShowError = { param($m) throw "ShowError must not fire on success: $m" }
+    try {
+        foreach ($mode in @(@{ AH = $true; P = 175 }, @{ AH = $false; P = 225 })) {
+            $ret = Set-DisplayMode -AutoHide $mode.AH -Percent $mode.P
+            Assert-Equal $ret $true "Set-DisplayMode $($mode.AH)/$($mode.P) return value"
+            Assert-Equal (Get-TaskbarAutoHide) $mode.AH "Auto-hide after mode $($mode.AH)/$($mode.P)"
+            Assert-Equal (Get-DisplayScale) $mode.P "Scale after mode $($mode.AH)/$($mode.P)"
+            Assert-Equal (Wait-LiveDisplayScale $mode.P) $mode.P "Live DPI after mode $($mode.AH)/$($mode.P)"
+        }
+    } finally {
+        $script:ShowError = $saved
+        if ((Get-TaskbarAutoHide) -ne $origAH) { [void](Set-TaskbarAutoHide -Enabled $origAH) }
+        if ((Get-DisplayScale) -ne $origScale) { [void](Set-DisplayScale -Percent $origScale) }
+    }
+}
+
+function Test-ModeIdempotent {
+    $origAH = Get-TaskbarAutoHide; $origScale = Get-DisplayScale
+    $realTaskbar = (Get-Command Set-TaskbarAutoHide -CommandType Function).ScriptBlock
+    $realScale = (Get-Command Set-DisplayScale -CommandType Function).ScriptBlock
+    $saved = $script:ShowError
+    try {
+        $script:ShowError = { param($m) throw "ShowError must not fire: $m" }
+        Assert-Equal (Set-DisplayMode -AutoHide $true -Percent 175) $true 'First call to reach compact'
+        $script:TaskbarCalls = 0; $script:ScaleCalls = 0
+        function script:Set-TaskbarAutoHide { param([bool]$Enabled) $script:TaskbarCalls++; return $Enabled }
+        function script:Set-DisplayScale { param([int]$Percent) $script:ScaleCalls++; return $Percent }
+        $ret = Set-DisplayMode -AutoHide $true -Percent 175
+        Assert-Equal $ret $true 'Second call to already-active mode returns true'
+        Assert-Equal $script:TaskbarCalls 0 'Set-TaskbarAutoHide calls on already-active mode'
+        Assert-Equal $script:ScaleCalls 0 'Set-DisplayScale calls on already-active mode'
+    } finally {
+        Set-Item -Path 'function:script:Set-TaskbarAutoHide' -Value $realTaskbar
+        Set-Item -Path 'function:script:Set-DisplayScale' -Value $realScale
+        $script:ShowError = $saved
+        if ((Get-TaskbarAutoHide) -ne $origAH) { [void](Set-TaskbarAutoHide -Enabled $origAH) }
+        if ((Get-DisplayScale) -ne $origScale) { [void](Set-DisplayScale -Percent $origScale) }
+    }
+}
+
+function Test-ModeReportsFailure {
+    $origAH = Get-TaskbarAutoHide; $origScale = Get-DisplayScale
+    $realTaskbar = (Get-Command Set-TaskbarAutoHide -CommandType Function).ScriptBlock
+    $realScale = (Get-Command Set-DisplayScale -CommandType Function).ScriptBlock
+    $saved = $script:ShowError
+    try {
+        $script:Messages = @()
+        $script:ShowError = { param($m) $script:Messages += $m }
+        $wantAH = -not $origAH
+        $wantScale = if ($origScale -eq 175) { 225 } else { 175 }
+
+        # Taskbar setter that does not change state
+        function script:Set-TaskbarAutoHide { param([bool]$Enabled) return $Enabled }
+        $ret = Set-DisplayMode -AutoHide $wantAH -Percent $origScale
+        Assert-Equal $ret $false 'Taskbar mismatch returns false'
+        Assert-Equal $script:Messages.Count 1 'Taskbar mismatch message count'
+        if ($script:Messages[0] -notmatch '(?i)taskbar|auto-?hide') { throw "Message should mention taskbar: $($script:Messages[0])" }
+        Set-Item -Path 'function:script:Set-TaskbarAutoHide' -Value $realTaskbar
+
+        # Scale setter that does not change state
+        $script:Messages = @()
+        function script:Set-DisplayScale { param([int]$Percent) return $Percent }
+        $ret = Set-DisplayMode -AutoHide $origAH -Percent $wantScale
+        Assert-Equal $ret $false 'Scale mismatch returns false'
+        Assert-Equal $script:Messages.Count 1 'Scale mismatch message count'
+        if ($script:Messages[0] -notmatch '(?i)scal') { throw "Message should mention scale: $($script:Messages[0])" }
+        Set-Item -Path 'function:script:Set-DisplayScale' -Value $realScale
+
+        # Setter that throws
+        $script:Messages = @()
+        function script:Set-DisplayScale { param([int]$Percent) throw 'boom from stub' }
+        $ret = Set-DisplayMode -AutoHide $origAH -Percent $wantScale
+        Assert-Equal $ret $false 'Setter exception returns false'
+        Assert-Equal $script:Messages.Count 1 'Setter exception message count'
+        if ($script:Messages[0] -notmatch 'boom from stub') { throw "Message should include the exception text: $($script:Messages[0])" }
+    } finally {
+        Set-Item -Path 'function:script:Set-TaskbarAutoHide' -Value $realTaskbar
+        Set-Item -Path 'function:script:Set-DisplayScale' -Value $realScale
+        $script:ShowError = $saved
+        if ((Get-TaskbarAutoHide) -ne $origAH) { [void](Set-TaskbarAutoHide -Enabled $origAH) }
+        if ((Get-DisplayScale) -ne $origScale) { [void](Set-DisplayScale -Percent $origScale) }
+    }
+}
+
 $tests = @(
     'Test-TaskbarRoundTrip'
     'Test-ScaleCurrent'
     'Test-ScaleRoundTrip'
     'Test-ScaleUnsupported'
+    'Test-ModeApplies'
+    'Test-ModeIdempotent'
+    'Test-ModeReportsFailure'
 )
 
 # ---- Runner ----

@@ -176,3 +176,41 @@ function Set-TaskbarAutoHide {
     Start-Sleep -Milliseconds 300
     return (Get-TaskbarAutoHide)
 }
+
+# Overridable error reporter (tests replace it). Takes one message string.
+$script:ShowError = {
+    param([string]$Message)
+    Add-Type -AssemblyName System.Windows.Forms
+    # Owner form makes the box topmost.
+    $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }
+    try {
+        [void][System.Windows.Forms.MessageBox]::Show($owner, $Message, 'Display Modes', 'OK', 'Error')
+    } finally { $owner.Dispose() }
+}
+
+function Set-DisplayMode {
+    param(
+        [Parameter(Mandatory)][bool]$AutoHide,
+        [Parameter(Mandatory)][int]$Percent
+    )
+    $problems = @()
+    try {
+        if ((Get-TaskbarAutoHide) -ne $AutoHide) { [void](Set-TaskbarAutoHide -Enabled $AutoHide) }
+        $gotHide = Get-TaskbarAutoHide
+        if ($gotHide -ne $AutoHide) { $problems += "Taskbar auto-hide did not apply (wanted $AutoHide, is $gotHide)." }
+    } catch {
+        $problems += "Taskbar auto-hide failed: $($_.Exception.Message)"
+    }
+    try {
+        if ((Get-DisplayScale) -ne $Percent) { [void](Set-DisplayScale -Percent $Percent) }
+        $gotScale = Get-DisplayScale
+        if ($gotScale -ne $Percent) { $problems += "Display scale did not apply (wanted $Percent%, is $gotScale%)." }
+    } catch {
+        $problems += "Display scale failed: $($_.Exception.Message)"
+    }
+    if ($problems.Count -gt 0) {
+        & $script:ShowError ($problems -join "`n")
+        return $false
+    }
+    return $true
+}

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Display Modes Plan</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--muted:#555;--card:#f4f5f7;--accent:#0b5fff}
+@media (prefers-color-scheme:dark){:root{--bg:#16181c;--fg:#e8e8e8;--muted:#a0a4ab;--card:#22252b;--accent:#6ea0ff}}
+body{background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,sans-serif;max-width:50rem;margin:0 auto;padding:1.5rem 1rem 3rem}
+h1{font-size:1.6rem}h2{font-size:1.2rem;margin-top:2rem;color:var(--accent)}h3{font-size:1.05rem;margin-top:1.6rem}
+code,pre{background:var(--card);border-radius:4px}code{padding:.1em .35em}pre{padding:.7rem 1rem;overflow-x:auto}
+ul.steps{list-style:none;padding-left:0}ul.steps li::before{content:"\2610\00a0"}
+.box{background:var(--card);padding:.6rem 1rem;border-radius:8px}
+</style>
+</head>
+<body>
+<h1>Display Modes Implementation Plan</h1>
+<p class="box"><b>For agentic workers:</b> REQUIRED SUB-SKILL: use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task by task. Steps use checkboxes.</p>
+
+<p><b>Goal:</b> Two pinnable one-click shortcuts that switch Windows between Compact (taskbar auto-hide on, 175% scale) and Roomy (auto-hide off, 225% scale).</p>
+<p><b>Architecture:</b> One helper module with two functions (taskbar auto-hide, display scale), two thin mode scripts that call it and verify the result, and an installer that creates the <code>.lnk</code> shortcuts. Everything is PowerShell with inline C# P/Invoke.</p>
+<p><b>Tech Stack:</b> PowerShell 5.1+ (<code>powershell.exe</code>), inline C#, <code>git</code>, <code>gh</code> CLI.</p>
+<p><b>Spec:</b> <code>P:\Proton Drive\My files\Projects\display-modes\design.html</code></p>
+
+<h2>Global Constraints</h2>
+<ul>
+<li>Windows 11, one 4K primary display; no admin rights, no downloads, no third-party binaries.</li>
+<li>Compact = auto-hide <b>on</b> + <b>175%</b>. Roomy = auto-hide <b>off</b> + <b>225%</b>.</li>
+<li>Changes apply instantly: no sign-out, no Explorer restart.</li>
+<li>Shortcuts run <code>powershell.exe -NoProfile -WindowStyle Hidden -File ...</code> and are pinnable.</li>
+<li>Silent on success; a message box on any mismatch. Scripts are idempotent.</li>
+<li>Scale uses the undocumented <code>DisplayConfigSetDeviceInfo</code> (type -4; get is type -3). Taskbar uses documented <code>SHAppBarMessage</code>.</li>
+<li>Docs and plans are HTML; <code>README.md</code> is the one exception and must exist and stay current.</li>
+<li>GitHub repo is <b>private</b>.</li>
+</ul>
+
+<h2>Review Focus</h2>
+<ul>
+<li>Project path contains spaces (<code>Proton Drive\My files</code>): shortcuts and scripts must still run.</li>
+<li>Mode already active: nothing changes, no flicker, no message.</li>
+<li>Requested scale is not offered by the display (list differs per monitor): report it, don't set a wrong value.</li>
+<li>Taskbar window not found (Explorer restarting): report it, don't claim success.</li>
+<li>Run from a hidden shortcut: the failure message box must still appear in front.</li>
+</ul>
+
+<h2>File Structure</h2>
+<ul>
+<li><code>DisplayModes.ps1</code>: helper functions only, no side effects when dot-sourced.</li>
+<li><code>Compact.ps1</code>, <code>Roomy.ps1</code>: apply one mode each.</li>
+<li><code>Install-Shortcuts.ps1</code>: creates <code>Compact.lnk</code>, <code>Roomy.lnk</code> and icons.</li>
+<li><code>tests/Test-DisplayModes.ps1</code>: plain assertion script; saves the current state and restores it at the end.</li>
+<li><code>README.md</code>, <code>.gitignore</code>.</li>
+</ul>
+
+<h3>Task 1: Repo and README skeleton</h3>
+<p><b>Files:</b> Create <code>README.md</code>, <code>.gitignore</code> (ignores <code>*.lnk</code>, which hold machine-specific paths). <code>design.html</code> and <code>plan.html</code> are committed.</p>
+<p><b>Interfaces:</b> Produces a git repo on <code>main</code> with private remote <code>origin</code>.</p>
+<ul class="steps">
+<li>Run <code>gh auth status</code>. Expected: logged in. If not, stop and ask the user to run <code>! gh auth login</code>.</li>
+<li>Write <code>README.md</code> with a title, a one-line purpose, the two-mode table, and "Setup" and "How it works" stubs that later tasks fill in.</li>
+<li><code>git init -b main</code>, add all files, commit <code>chore: initial design, plan and README</code>.</li>
+<li><code>gh repo create display-modes --private --source . --remote origin --push</code>. Verify: <code>gh repo view --json visibility</code> prints <code>PRIVATE</code>.</li>
+<li>Note for the user: the repo lives inside Proton Drive, so the <code>.git</code> folder will be synced too.</li>
+</ul>
+
+<h3>Task 2: Taskbar auto-hide</h3>
+<p><b>Files:</b> Create <code>DisplayModes.ps1</code>, <code>tests/Test-DisplayModes.ps1</code>.</p>
+<p><b>Interfaces:</b> Produces <code>Get-TaskbarAutoHide : [bool]</code> and <code>Set-TaskbarAutoHide -Enabled [bool] : [bool]</code> (returns the state read back after setting). Throws if the <code>Shell_TrayWnd</code> window is not found.</p>
+<ul class="steps">
+<li>Write the test <code>Test-TaskbarRoundTrip</code>: record the original state, call <code>Set-TaskbarAutoHide -Enabled $true</code> and assert it returns <code>$true</code> and <code>Get-TaskbarAutoHide</code> is <code>$true</code>; repeat for <code>$false</code>; restore the original.</li>
+<li>Run <code>powershell -NoProfile -File tests\Test-DisplayModes.ps1</code>. Expected: FAIL, functions not defined.</li>
+<li>Implement both functions in <code>DisplayModes.ps1</code>. Use <code>SHAppBarMessage</code> with <code>ABM_GETSTATE</code> (4) and <code>ABM_SETSTATE</code> (10), flag <code>ABS_AUTOHIDE</code> (1), on the <code>Shell_TrayWnd</code> handle from <code>FindWindow</code>. Preserve the existing <code>ABS_ALWAYSONTOP</code> bit when setting.</li>
+<li>Re-run the test. Expected: PASS, and the taskbar visibly toggles with no Explorer restart.</li>
+<li>Commit <code>feat: taskbar auto-hide helper</code>.</li>
+</ul>
+
+<h3>Task 3: Display scale</h3>
+<p><b>Files:</b> Modify <code>DisplayModes.ps1</code>, <code>tests/Test-DisplayModes.ps1</code>.</p>
+<p><b>Interfaces:</b> Produces <code>Get-DisplayScale : [int]</code> (percent, e.g. 225) and <code>Set-DisplayScale -Percent [int] : [int]</code> (returns percent read back). Throws a message naming the supported percentages if the requested one is not offered. Targets the primary display only.</p>
+<ul class="steps">
+<li>Write tests: <code>Test-ScaleCurrent</code> asserts <code>Get-DisplayScale</code> equals <code>round(AppliedDPI / 96 * 100)</code> from <code>HKCU:\Control Panel\Desktop\WindowMetrics</code> (currently 216 = 225); <code>Test-ScaleRoundTrip</code> sets 175, asserts the return is 175, sets 225, asserts 225, then restores the original; <code>Test-ScaleUnsupported</code> asserts <code>Set-DisplayScale -Percent 137</code> throws and leaves the scale unchanged.</li>
+<li>Run the test script. Expected: FAIL, functions not defined.</li>
+<li>Implement in <code>DisplayModes.ps1</code>. Find the primary source's adapter id and source id with <code>GetDisplayConfigBufferSizes</code> and <code>QueryDisplayConfig</code>. Call <code>DisplayConfigGetDeviceInfo</code> type -3 to get <code>minScaleRel</code>, <code>curScaleRel</code>, <code>maxScaleRel</code> (steps relative to the recommended scale). Map steps to the fixed list 100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500 anchored on the recommended step, which is <code>-minScaleRel</code> places from the list start. Set via <code>DisplayConfigSetDeviceInfo</code> type -4.</li>
+<li>Re-run the test. Expected: PASS, and the screen re-scales instantly. If the call does nothing on this build, report it to the user rather than working around it.</li>
+<li>Commit <code>feat: display scale helper</code>.</li>
+</ul>
+
+<h3>Task 4: Mode scripts</h3>
+<p><b>Files:</b> Create <code>Compact.ps1</code>, <code>Roomy.ps1</code>. Modify <code>DisplayModes.ps1</code>, <code>tests/Test-DisplayModes.ps1</code>.</p>
+<p><b>Interfaces:</b> Consumes the Task 2 and 3 functions. Produces <code>Set-DisplayMode -AutoHide [bool] -Percent [int] : [bool]</code> in <code>DisplayModes.ps1</code>; returns <code>$true</code> only if both read-backs match. On any mismatch or exception it shows a topmost <code>System.Windows.Forms.MessageBox</code> naming what did not apply, then returns <code>$false</code>. Each mode script dot-sources the helper via <code>$PSScriptRoot</code> and calls <code>Set-DisplayMode</code> with its values.</p>
+<ul class="steps">
+<li>Write tests: <code>Test-ModeApplies</code> calls <code>Set-DisplayMode -AutoHide $true -Percent 175</code>, asserts <code>$true</code> and both getters agree; same for <code>$false</code>/225. <code>Test-ModeIdempotent</code> calls the same mode twice and asserts the second call returns <code>$true</code> without invoking either setter (check by mocking the setters with counters). Replace the message-box call with an overridable <code>$script:ShowError</code> scriptblock so a test can assert it fires on a failed read-back.</li>
+<li>Run the test script. Expected: FAIL, <code>Set-DisplayMode</code> not defined.</li>
+<li>Implement <code>Set-DisplayMode</code>: read current state, only call a setter whose value differs, read back, compare.</li>
+<li>Create <code>Compact.ps1</code> (<code>-AutoHide $true -Percent 175</code>) and <code>Roomy.ps1</code> (<code>-AutoHide $false -Percent 225</code>).</li>
+<li>Run the tests, then run each script directly with <code>powershell -NoProfile -File Compact.ps1</code>. Expected: PASS, and the display ends in the right state with no output.</li>
+<li>Commit <code>feat: Compact and Roomy mode scripts</code>.</li>
+</ul>
+
+<h3>Task 5: Shortcuts and README</h3>
+<p><b>Files:</b> Create <code>Install-Shortcuts.ps1</code>. Modify <code>README.md</code>.</p>
+<p><b>Interfaces:</b> Consumes <code>Compact.ps1</code> and <code>Roomy.ps1</code>. Produces <code>Compact.lnk</code> and <code>Roomy.lnk</code> in the project folder.</p>
+<ul class="steps">
+<li>Implement <code>Install-Shortcuts.ps1</code> using <code>WScript.Shell</code> <code>CreateShortcut</code>. Target <code>powershell.exe</code>, arguments <code>-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "&lt;full path&gt;"</code> with the path quoted for spaces, working directory the project folder, and a distinct built-in icon from <code>imageres.dll</code> for each (small-window glyph for Compact, large-window glyph for Roomy; builder's choice of index).</li>
+<li>Run it, then launch each <code>.lnk</code> by double-click. Expected: display switches; no console window flashes for more than a moment.</li>
+<li>Pin check: right-click each shortcut, "Show more options", "Pin to taskbar". Note in the README that Windows 11 only pins <code>.lnk</code> files that target an <code>.exe</code> (the target here is <code>powershell.exe</code>, so this works).</li>
+<li>Fill in the README "Setup" (run <code>Install-Shortcuts.ps1</code>, pin both) and "How it works" (the two calls and the risk that a Windows update could break scale switching, in which case a message box says so).</li>
+<li>Commit <code>feat: shortcut installer and README</code>, then <code>git push</code>.</li>
+</ul>
+
+<h2>Self-review</h2>
+<ul>
+<li><b>Spec coverage:</b> both modes, instant apply, pinnable shortcuts, no installs, verify-and-report, idempotency, README and private repo all map to Tasks 1 to 5. Multi-monitor and toggle are non-goals and absent.</li>
+<li><b>Types:</b> <code>Get/Set-TaskbarAutoHide</code>, <code>Get/Set-DisplayScale</code> and <code>Set-DisplayMode</code> are named identically across tasks.</li>
+<li><b>Review Focus:</b> spaces in path (Task 5 quoted args), already-active (Task 4 idempotent test), unsupported scale (Task 3 test), missing taskbar window (Task 2 throws, Task 4 reports), hidden-window message box (Task 4 topmost message box).</li>
+<li><b>Open risk:</b> the scale step mapping in Task 3 is the one piece that may need adjusting on first run.</li>
+</ul>
+</body>
+</html>

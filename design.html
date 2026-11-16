@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Display Modes Design</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--muted:#555;--card:#f4f5f7;--accent:#0b5fff}
+@media (prefers-color-scheme:dark){:root{--bg:#16181c;--fg:#e8e8e8;--muted:#a0a4ab;--card:#22252b;--accent:#6ea0ff}}
+body{background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,sans-serif;max-width:46rem;margin:0 auto;padding:1.5rem 1rem 3rem}
+h1{font-size:1.6rem}h2{font-size:1.15rem;margin-top:2rem;color:var(--accent)}
+.card{background:var(--card);padding:.8rem 1rem;border-radius:8px}
+code{background:var(--card);padding:.1em .35em;border-radius:4px}
+table{border-collapse:collapse;width:100%}td,th{border:1px solid var(--muted);padding:.4rem .6rem;text-align:left}
+</style>
+</head>
+<body>
+<h1>Display Modes: short design</h1>
+<p class="muted">Status: awaiting approval. Size: small change. Date: 2026-11-16.</p>
+
+<h2>Intent and why</h2>
+<p>One-click switching between two display setups, pinnable to the Windows taskbar. The user switches depending on the work and apps in use: sometimes more screen real estate, sometimes more detail. Only two modes are ever needed.</p>
+<table>
+<tr><th>Mode</th><th>Taskbar auto-hide</th><th>Scale</th><th>Purpose</th></tr>
+<tr><td>Compact</td><td>On</td><td>175%</td><td>More screen real estate</td></tr>
+<tr><td>Roomy</td><td>Off</td><td>225%</td><td>More detail</td></tr>
+</table>
+
+<h2>Goals</h2>
+<ul>
+<li>Each mode applies instantly, with no sign-out and no Explorer restart or flicker.</li>
+<li>Each mode has its own shortcut (<code>.lnk</code>, own icon) that can be pinned to the taskbar and runs with no console window.</li>
+<li>No admin rights, no downloads, no installs. Plain readable text files.</li>
+</ul>
+
+<h2>Non-goals</h2>
+<ul>
+<li>No third mode and no toggle script.</li>
+<li>No multi-monitor support. The machine has one 4K display (currently 225%, auto-hide off).</li>
+<li>Apps that only re-scale on restart are not handled.</li>
+</ul>
+
+<h2>Anti-goals</h2>
+<ul>
+<li>Failing silently. If a call does not take effect, the user must be told.</li>
+<li>Dependence on unvetted third-party binaries.</li>
+</ul>
+
+<h2>Constraints</h2>
+<ul>
+<li>Windows 11, PowerShell. Single primary 4K display.</li>
+<li>Scale has no official API. The undocumented <code>DisplayConfigSetDeviceInfo</code> call is used, so a future Windows update could break it.</li>
+</ul>
+
+<h2>Approaches considered</h2>
+<ol>
+<li><b>PowerShell scripts calling Windows directly (chosen).</b> Documented <code>SHAppBarMessage</code> auto-hide call for the taskbar, undocumented display call for scale. Instant, no dependencies. Risk: scale call may break in a future update.</li>
+<li>Wrap a third-party tool such as SetDPI. Same underlying call, but an opaque downloaded binary. Rejected on trust.</li>
+<li>Registry edits plus Explorer restart. Update-proof but flickers, and scale needs sign-out. Rejected as it defeats quick switching.</li>
+</ol>
+<p>Chosen by the user. Reason: the only option that is instant and needs nothing installed.</p>
+
+<h2>Design</h2>
+<ul>
+<li>Files in <code>P:\Proton Drive\My files\Projects\display-modes\</code>: a shared helper (<code>DisplayModes.ps1</code>), <code>Compact.ps1</code>, <code>Roomy.ps1</code>, a one-off <code>Install-Shortcuts.ps1</code> that creates <code>Compact.lnk</code> and <code>Roomy.lnk</code> with icons, and a <code>README.md</code>.</li>
+<li>Helper functions: <code>Set-TaskbarAutoHide</code> and <code>Set-DisplayScale</code>, using inline C# P/Invoke.</li>
+<li>Shortcuts run <code>powershell.exe -NoProfile -WindowStyle Hidden -File ...</code>.</li>
+<li>After applying, each script re-reads the actual state. On mismatch it shows a small message box saying what did not apply. On success it stays silent.</li>
+<li>Scripts are idempotent: running a mode that is already active changes nothing.</li>
+</ul>
+
+<h2>Left to the builder</h2>
+<ul>
+<li>Exact mechanics of mapping 175% and 225% to the undocumented call's relative scale steps on this display.</li>
+<li>Icon choice and the shortcut-creation details.</li>
+<li>Verifying by running each script and reading back the DPI and taskbar state.</li>
+</ul>
+</body>
+</html>

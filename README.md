@@ -28,13 +28,16 @@ The switch is instant: no sign-out, no restart.
 ## How it works
 
 - **Auto-hide:** `SHAppBarMessage` with `ABM_SETSTATE` sets the taskbar's auto-hide flag.
-- **Scale:** the undocumented `DisplayConfigSetDeviceInfo` request type `-4` sets the DPI scale of the primary display
-  (the Settings app uses the same call). Supported values are the standard steps such as 175% and 225%.
-- **Verification:** after setting, each script reads both values back. On any mismatch or failure it shows a message
-  box ("Display Modes") instead of failing silently.
-- **Idempotent:** running a mode that is already active changes nothing.
+- **Scale:** the undocumented `DisplayConfigSetDeviceInfo` request type `-4` sets the DPI scale of the primary display,
+  the same undocumented request used by community tools such as SetDPI. Only the scale steps the display reports as
+  supported are accepted; anything else is rejected with an error listing the supported values.
+- **Verification:** after setting, each script reads both values back. Both settings are attempted on every run (a
+  failure in one does not skip the other), and any mismatch or failure is reported together in one "Display Modes" message box
+  instead of failing silently.
+- **Idempotent:** a setting that is already at the requested value is left untouched.
 - **Risk:** the scale call is undocumented, so a future Windows update may break it. If that happens the message box
-  says the scale could not be set; auto-hide keeps working independently.
+  says the display scale failed or did not apply. The auto-hide setter is a separate `SHAppBarMessage` call, so it is still
+  attempted and reported on its own.
 - **`ShowFatal.ps1`:** a small, dependency-free message-box helper used by `Compact.ps1` and `Roomy.ps1` for any failure,
   including `DisplayModes.ps1` itself failing to load. `DisplayModes.ps1` holds the actual getters and setters.
 
